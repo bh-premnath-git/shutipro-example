@@ -1,0 +1,83 @@
+version: "3.9"
+
+services:
+  vault:
+    image: hashicorp/vault:latest
+    container_name: vault
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: root
+      VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
+    command: >
+      server -dev
+      -dev-root-token-id=root
+      -dev-listen-address=0.0.0.0:8200
+    ports:
+      - "8200:8200"
+    volumes:
+      - vault-data:/vault/data
+    networks:
+      - test-network
+
+  dynamodb-local:
+    image: amazon/dynamodb-local:latest
+    container_name: dynamodb-local
+    ports:
+      - "8000:8000"
+    command: "-jar DynamoDBLocal.jar -sharedDb -inMemory"
+    working_dir: /home/dynamodblocal
+    networks:
+      - test-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sS -X POST http://localhost:8000/ -H 'X-Amz-Target: DynamoDB_20120810.ListTables' -H 'Content-Type: application/x-amz-json-1.0' -d '{}' >/dev/null"]
+      interval: 5s
+      timeout: 2s
+      retries: 20
+      start_period: 3s
+
+  dynamodb-init:
+    image: python:3.11-slim
+    container_name: dynamodb-init
+    depends_on:
+      dynamodb-local:
+        condition: service_healthy
+    networks:
+      - test-network
+    environment:
+      DYNAMODB_ENDPOINT: "http://dynamodb-local:8000"
+      AWS_REGION: "us-east-1"
+    volumes:
+      - ./app_scripts:/scripts
+    command: ["/bin/bash", "/scripts/init_dynamodb.sh"]
+
+  app:
+    build: ./app
+    container_name: kyc-api
+    depends_on:
+      vault:
+        condition: service_started
+      dynamodb-local:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      VAULT_ADDR: "http://vault:8200"
+      VAULT_TOKEN: "root"               # dev only
+      DYNAMODB_ENDPOINT: "http://dynamodb-local:8000"
+      AWS_ACCESS_KEY_ID: "dummy"        # required by boto3, but ignored by dynamodb-local
+      AWS_SECRET_ACCESS_KEY: "dummy"    # same
+      AWS_REGION: "us-east-1"
+      # ShuftiPro callback URL loaded from .env file
+      # Set SHUFTIPRO_CALLBACK_URL in .env to enable webhooks
+    ports:
+      - "8080:8080"
+    networks:
+      - test-network
+
+volumes:
+  vault-data:
+
+networks:
+  test-network:
+    driver: bridge
