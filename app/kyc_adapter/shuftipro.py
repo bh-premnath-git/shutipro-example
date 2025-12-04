@@ -7,11 +7,12 @@ from random import randint
 from typing import Dict, Any, Optional
 
 import httpx
+from .base import KYCProvider
 
 logger = logging.getLogger(__name__)
 
 
-class ShuftiProAdapter:
+class ShuftiProAdapter(KYCProvider):
     def __init__(
         self,
         client_id: str,

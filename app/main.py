@@ -3,10 +3,10 @@ import logging
 import hashlib
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, EmailStr
-from typing import List, Literal, Optional
+from typing import Optional
 
 from config import get_shuftipro_adapter
-from db.dynamo import save_kyc_session, get_kyc_session, update_kyc_session_status
+from db.dynamo import save_kyc_session, get_kyc_session, update_kyc_session_status, download_documents
 
 # Configure logging
 logging.basicConfig(
@@ -127,47 +127,61 @@ async def shuftipro_webhook(request: Request):
     logger.info(f"Received webhook for reference: {reference}")
     logger.debug(f"Webhook payload: {json.dumps(payload, indent=2)}")
     
-    # Verify signature (if present)
+    # Verify signature (required for production)
     signature = request.headers.get("Signature")
     if signature:
         # Get secret key from adapter (already loaded from Vault)
         secret_key = adapter.secret_key
+        # Double hash for clients registered after 15 March 2023
         secret_hash = hashlib.sha256(secret_key.encode()).hexdigest()
         calculated_sig = hashlib.sha256(f"{body_text}{secret_hash}".encode()).hexdigest()
         
         if signature != calculated_sig:
-            logger.warning(f"Signature verification failed for {reference}")
-            # Log but don't reject - some ShuftiPro modes don't send signatures
+            logger.error(f"Signature verification FAILED for {reference}")
+            raise HTTPException(status_code=401, detail="Invalid signature")
         else:
             logger.info(f"Signature verified for {reference}")
+    else:
+        logger.warning(f"No signature header for {reference} - accepting anyway")
     
-    # Extract status from webhook
-    # ShuftiPro sends status in different formats depending on the event
+    # Extract event and status
     event = payload.get("event", "")
-    status_code = payload.get("verification_status") or payload.get("status")
     
     # Map ShuftiPro events to our status
-    if "verification.accepted" in event or status_code == "accepted":
+    if event == "verification.accepted":
         status = "approved"
-    elif "verification.declined" in event or status_code == "declined":
+    elif event == "verification.declined":
         status = "declined"
-    elif "verification.cancelled" in event:
+    elif event == "verification.cancelled":
         status = "cancelled"
-    else:
+    elif event == "review.pending":
+        status = "review_pending"
+    elif event in ["request.pending", "request.received"]:
         status = "pending"
+    elif event == "request.timeout":
+        status = "timeout"
+    else:
+        status = "unknown"
+        logger.warning(f"Unknown event type: {event}")
     
-    logger.info(f"Webhook status for {reference}: {status} (event: {event})")
+    logger.info(f"Webhook event: {event} | Status: {status} | Reference: {reference}")
     
-    # Log OCR data if present
-    if "document" in payload:
-        doc_data = payload.get("document", {})
-        if isinstance(doc_data, dict):
-            name = doc_data.get("name")
-            dob = doc_data.get("dob")
-            doc_num = doc_data.get("document_number")
-            logger.info(f"OCR data - Name: {name}, DOB: {dob}, Doc#: {doc_num}")
+    # Extract OCR data from verification_data and additional_data (official structure)
+    verification_data = payload.get("verification_data", {})
+    additional_data = payload.get("additional_data", {})
     
-    # Update DynamoDB with webhook data
+    if verification_data:
+        # Log key OCR fields for monitoring
+        doc_data = verification_data.get("document", {})
+        if doc_data:
+            name = doc_data.get("name", {})
+            logger.info(f"OCR - Name: {name.get('first_name')} {name.get('last_name')}, DOB: {doc_data.get('dob')}, Doc#: {doc_data.get('document_number')}")
+        
+        addr_data = verification_data.get("address", {})
+        if addr_data:
+            logger.info(f"OCR - Address: {addr_data.get('full_address')}")
+    
+    # Update DynamoDB first to extract OCR fields including document URLs
     try:
         update_kyc_session_status(
             reference=reference,
@@ -178,6 +192,24 @@ async def shuftipro_webhook(request: Request):
     except Exception as e:
         logger.error(f"Failed to update session {reference}: {e}")
         raise HTTPException(status_code=500, detail="Failed to update session")
+    
+    # Download documents if available
+    try:
+        # Get updated session with extracted fields
+        existing = get_kyc_session(reference)
+        if existing:
+            user_id = existing.get("user_id")
+            fields = existing.get("fields", {})
+            document_urls = fields.get("document_urls", {})
+            
+            # Download documents if any URLs found
+            if document_urls:
+                logger.info(f"Downloading {len(document_urls)} documents for user {user_id}")
+                downloaded = await download_documents(user_id, document_urls)
+                logger.info(f"Downloaded {len(downloaded)} documents: {list(downloaded.keys())}")
+    except Exception as e:
+        logger.error(f"Failed to download documents for {reference}: {e}")
+        # Don't fail the webhook if download fails
     
     # Return success
     return {

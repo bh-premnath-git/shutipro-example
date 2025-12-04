@@ -72,6 +72,8 @@ services:
       # Set SHUFTIPRO_CALLBACK_URL in .env to enable webhooks
     ports:
       - "8080:8080"
+    volumes:
+      - ./documents:/app/documents
     networks:
       - test-network
 

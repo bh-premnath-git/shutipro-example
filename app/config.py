@@ -1,6 +1,6 @@
 import os
 import hvac
-from kyc_adapter.shuftipro import ShuftiProAdapter
+from kyc_adapter import ShuftiProAdapter
 
 
 def get_shuftipro_adapter() -> ShuftiProAdapter:
