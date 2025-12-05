@@ -1,19 +1,32 @@
 #!/bin/bash
 
 echo "=========================================="
-echo "Starting localhost.run tunnel..."
+echo "Starting Cloudflare Tunnel..."
 echo "=========================================="
 echo ""
-echo "This will create a public URL for your local server."
-echo "Keep this terminal open while testing webhooks."
+echo "ℹ️  NOTE: Cloudflare Tunnel is now integrated into Docker Compose!"
 echo ""
-echo "Once you see the URL, copy the HTTPS version and:"
-echo "1. Update .env file: SHUFTIPRO_CALLBACK_URL=https://YOUR-URL.localhost.run/kyc/shuftipro/webhook"
-echo "2. Add the domain (YOUR-URL.localhost.run) to ShuftiPro dashboard"
-echo "3. Restart the app: docker compose up -d app"
+echo "The tunnel service starts automatically with:"
+echo "  docker compose up -d"
 echo ""
 echo "=========================================="
 echo ""
 
-# Start the tunnel
-ssh -R 80:localhost:8080 nokey@localhost.run
+# Check if cloudflared is already running
+if docker ps --format '{{.Names}}' | grep -q "^cloudflared-tunnel$"; then
+    echo "✅ Cloudflare Tunnel is already running!"
+    echo ""
+    echo "Getting the tunnel URL..."
+    echo ""
+    ./get_tunnel_url.sh
+else
+    echo "Starting Cloudflare Tunnel service..."
+    docker compose up -d cloudflared
+    
+    echo ""
+    echo "⏳ Waiting for tunnel to start..."
+    sleep 5
+    echo ""
+    
+    ./get_tunnel_url.sh
+fi

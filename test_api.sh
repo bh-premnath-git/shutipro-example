@@ -1,6 +1,6 @@
 #!/bin/bash
 
-API_URL="http://localhost:8080"
+API_URL="http://localhost:8181"
 
 echo "=== KYC API Test Script ==="
 echo ""

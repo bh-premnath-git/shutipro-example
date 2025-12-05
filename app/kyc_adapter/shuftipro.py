@@ -39,7 +39,7 @@ class ShuftiProAdapter(KYCProvider):
 
         payload: Dict[str, Any] = {
             "reference": reference,
-            "journey_id": body.get("journey_id", ""),
+            "journey_id": body.get("journey_id", "iySLIfgD1764787557"),
             "email": body["email"],
             "enhanced_originality_checks": "0",
         }

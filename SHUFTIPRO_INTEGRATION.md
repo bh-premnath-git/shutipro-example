@@ -15,7 +15,7 @@ Your KYC backend is now **fully integrated with ShuftiPro's production API** at 
 ## 📊 Test Results
 
 ```bash
-curl -X POST http://localhost:8080/kyc/start \
+curl -X POST http://localhost:8181/kyc/start \
   -H 'Content-Type: application/json' \
   -d '{
     "user_id":"real-test-user",
@@ -183,7 +183,7 @@ INFO - KYC verification URL generated for user real-test-user
 
 ### Test with ID Card
 ```bash
-curl -X POST http://localhost:8080/kyc/start \
+curl -X POST http://localhost:8181/kyc/start \
   -H 'Content-Type: application/json' \
   -d '{
     "user_id":"user-001",
@@ -195,7 +195,7 @@ curl -X POST http://localhost:8080/kyc/start \
 
 ### Test with Passport + ID Card
 ```bash
-curl -X POST http://localhost:8080/kyc/start \
+curl -X POST http://localhost:8181/kyc/start \
   -H 'Content-Type: application/json' \
   -d '{
     "user_id":"user-002",
@@ -207,7 +207,7 @@ curl -X POST http://localhost:8080/kyc/start \
 
 ### Test with Driving License
 ```bash
-curl -X POST http://localhost:8080/kyc/start \
+curl -X POST http://localhost:8181/kyc/start \
   -H 'Content-Type: application/json' \
   -d '{
     "user_id":"user-003",
@@ -220,7 +220,7 @@ curl -X POST http://localhost:8080/kyc/start \
 ### Check Status
 ```bash
 # Get the reference from the start response
-curl http://localhost:8080/kyc/status/ref-user-001-XXXX | jq
+curl http://localhost:8181/kyc/status/ref-user-001-XXXX | jq
 ```
 
 ## 📱 Integration Examples
@@ -228,7 +228,7 @@ curl http://localhost:8080/kyc/status/ref-user-001-XXXX | jq
 ### JavaScript/React
 ```javascript
 async function startKyc(userId, email) {
-  const response = await fetch('http://localhost:8080/kyc/start', {
+  const response = await fetch('http://localhost:8181/kyc/start', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -259,7 +259,7 @@ import requests
 
 def start_kyc(user_id: str, email: str):
     response = requests.post(
-        'http://localhost:8080/kyc/start',
+        'http://localhost:8181/kyc/start',
         json={
             'user_id': user_id,
             'email': email,
@@ -282,16 +282,16 @@ def start_kyc(user_id: str, email: str):
 ### cURL
 ```bash
 # Store reference
-REF=$(curl -s -X POST http://localhost:8080/kyc/start \
+REF=$(curl -s -X POST http://localhost:8181/kyc/start \
   -H 'Content-Type: application/json' \
   -d '{"user_id":"user-123","email":"user@example.com","documentTypes":["passport"],"sides":"front_only"}' \
   | jq -r '.reference')
 
 echo "Reference: $REF"
-echo "Check status: http://localhost:8080/kyc/status/$REF"
+echo "Check status: http://localhost:8181/kyc/status/$REF"
 
 # Later, check status
-curl http://localhost:8080/kyc/status/$REF | jq
+curl http://localhost:8181/kyc/status/$REF | jq
 ```
 
 ## 🔐 Security Notes
@@ -338,7 +338,7 @@ curl http://localhost:8080/kyc/status/$REF | jq
 - **ShuftiPro API Docs:** https://docs.shuftipro.com/
 - **ShuftiPro Dashboard:** https://shuftipro.com/
 - **API Logs:** `docker compose logs app -f`
-- **Interactive API Docs:** http://localhost:8080/docs
+- **Interactive API Docs:** http://localhost:8181/docs
 
 ## 🎉 Next Steps
 

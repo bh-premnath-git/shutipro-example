@@ -71,11 +71,21 @@ services:
       # ShuftiPro callback URL loaded from .env file
       # Set SHUFTIPRO_CALLBACK_URL in .env to enable webhooks
     ports:
-      - "8080:8080"
+      - "8181:8181"
     volumes:
       - ./documents:/app/documents
     networks:
       - test-network
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared-tunnel
+    depends_on:
+      - app
+    command: tunnel --no-autoupdate --url http://kyc-api:8181
+    networks:
+      - test-network
+    restart: unless-stopped
 
 volumes:
   vault-data:

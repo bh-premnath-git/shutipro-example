@@ -8,7 +8,7 @@ echo ""
 
 # Check if URL is provided as argument
 if [ -z "$1" ]; then
-    read -p "Enter your localhost.run URL (e.g., abc-123.localhost.run): " TUNNEL_URL
+    read -p "Enter your Cloudflare Tunnel URL (e.g., bright-cat-8273.trycloudflare.com): " TUNNEL_URL
 else
     TUNNEL_URL=$1
 fi

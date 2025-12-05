@@ -1,6 +1,7 @@
 import json
 import logging
 import hashlib
+import time
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, EmailStr
 from typing import Optional
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class KycStartRequest(BaseModel):
-    user_id: str
+    user_id: Optional[str] = None
     email: EmailStr
     journey_id: Optional[str] = None
 
@@ -43,26 +44,32 @@ adapter = get_shuftipro_adapter()
 
 @app.post("/kyc/start", response_model=KycStartResponse)
 async def kyc_start(body: KycStartRequest):
-    logger.info(f"Starting KYC verification for user: {body.user_id}")
+    # Generate user_id if not provided
+    user_id = body.user_id or f"user-{int(time.time())}"
+    logger.info(f"Starting KYC verification for user: {user_id}")
     
-    result = await adapter.start_verification(body.dict())
+    # Create request dict with user_id
+    request_data = body.dict()
+    request_data['user_id'] = user_id
+    
+    result = await adapter.start_verification(request_data)
     
     # Determine status based on result
     status = "pending"
     if result.get("error"):
         status = "failed"
-        logger.error(f"KYC verification failed for user {body.user_id}: {result.get('error')}")
+        logger.error(f"KYC verification failed for user {user_id}: {result.get('error')}")
     elif result.get("verification_url"):
         status = "pending"
-        logger.info(f"KYC verification URL generated for user {body.user_id}")
+        logger.info(f"KYC verification URL generated for user {user_id}")
     else:
         status = "unknown"
-        logger.warning(f"KYC verification returned without URL or error for user {body.user_id}")
+        logger.warning(f"KYC verification returned without URL or error for user {user_id}")
     
     # Store in DynamoDB
     save_kyc_session(
         reference=result["reference"],
-        user_id=body.user_id,
+        user_id=user_id,
         provider=result["provider"],
         status=status,
         raw_response=result["raw"],

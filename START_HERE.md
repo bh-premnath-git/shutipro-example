@@ -47,7 +47,7 @@ docker compose up --build -d  # Start services
 
 Or manually:
 ```bash
-curl -X POST http://localhost:8080/kyc/start \
+curl -X POST http://localhost:8181/kyc/start \
   -H 'Content-Type: application/json' \
   -d '{
     "user_id": "user-123",
@@ -60,8 +60,8 @@ curl -X POST http://localhost:8080/kyc/start \
 ## 🌐 Service URLs
 
 Once running:
-- **API**: http://localhost:8080
-- **API Docs (Swagger)**: http://localhost:8080/docs ← **TRY THIS!**
+- **API**: http://localhost:8181
+- **API Docs (Swagger)**: http://localhost:8181/docs ← **TRY THIS!**
 - **Vault UI**: http://localhost:8200 (token: `root`)
 - **DynamoDB Local**: http://localhost:8000
 
@@ -175,7 +175,7 @@ POST /kyc/shuftipro/webhook
 
 ## 🎨 Try the Interactive Docs
 
-Open http://localhost:8080/docs in your browser to see:
+Open http://localhost:8181/docs in your browser to see:
 - Interactive API documentation
 - Try endpoints directly in the browser
 - See request/response schemas
@@ -244,7 +244,7 @@ docker compose logs -f dynamodb-local
 
 ## 🚀 Next Steps
 
-1. **Test the API** - Use Swagger UI at http://localhost:8080/docs
+1. **Test the API** - Use Swagger UI at http://localhost:8181/docs
 2. **Setup webhooks** - Follow [LOCALHOST_RUN_SETUP.md](LOCALHOST_RUN_SETUP.md) for local testing
 3. **View OCR data** - Check DynamoDB for extracted document fields
 4. **Integrate with your app** - Call the API from your frontend
@@ -263,7 +263,7 @@ docker compose logs -f dynamodb-local
 - **Full Docs**: `README.md`
 - **Quick Reference**: `QUICKSTART.md`
 - **Architecture**: `PROJECT_OVERVIEW.md`
-- **API Docs**: http://localhost:8080/docs (when running)
+- **API Docs**: http://localhost:8181/docs (when running)
 
 ## 🎉 You're All Set!
 
@@ -273,7 +273,7 @@ Your KYC backend is ready. Start with:
 make setup  # Setup and start everything
 ```
 
-Then open http://localhost:8080/docs to explore the API!
+Then open http://localhost:8181/docs to explore the API!
 
 ---
 
