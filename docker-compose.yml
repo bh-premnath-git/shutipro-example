@@ -51,6 +51,43 @@ services:
       - ./app_scripts:/scripts
     command: ["/bin/bash", "/scripts/init_dynamodb.sh"]
 
+  minio:
+    image: quay.io/minio/minio:latest
+    container_name: minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin        # dev only
+      MINIO_ROOT_PASSWORD: minioadmin    # dev only
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # MinIO Console
+    volumes:
+      - minio-data:/data                 # persistent storage for objects
+    networks:
+      - test-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio-init:
+    image: quay.io/minio/mc:latest
+    container_name: minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - test-network
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minioadmin minioadmin;
+      mc mb local/kyc-documents --ignore-existing;
+      mc anonymous set download local/kyc-documents;
+      echo 'MinIO bucket kyc-documents created successfully';
+      exit 0;
+      "
+
   app:
     build: ./app
     container_name: kyc-api
@@ -58,6 +95,8 @@ services:
       vault:
         condition: service_started
       dynamodb-local:
+        condition: service_healthy
+      minio:
         condition: service_healthy
     env_file:
       - .env
@@ -70,6 +109,13 @@ services:
       AWS_REGION: "us-east-1"
       # ShuftiPro callback URL loaded from .env file
       # Set SHUFTIPRO_CALLBACK_URL in .env to enable webhooks
+      
+      # --- MinIO / S3 config for the app ---
+      S3_ENDPOINT: "http://minio:9000"        # internal DNS from Docker network
+      S3_ACCESS_KEY: "minioadmin"
+      S3_SECRET_KEY: "minioadmin"
+      S3_BUCKET_NAME: "kyc-documents"         # bucket name
+      S3_FORCE_PATH_STYLE: "true"             # important for MinIO-style endpoints
     ports:
       - "8181:8181"
     volumes:
@@ -89,6 +135,7 @@ services:
 
 volumes:
   vault-data:
+  minio-data:
 
 networks:
   test-network:

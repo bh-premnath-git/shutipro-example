@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 from datetime import datetime
 import logging
+from storage.s3 import get_s3_storage
 
 logger = logging.getLogger(__name__)
 
@@ -150,19 +151,128 @@ def extract_ocr_fields(raw_response: Dict[str, Any]) -> Dict[str, Any]:
     return {k: v for k, v in fields.items() if v is not None}
 
 
-async def download_documents(user_id: str, document_urls: Dict[str, str], base_path: str = "/app/documents") -> Dict[str, str]:
+async def download_proof_documents(user_id: str, proofs: Dict[str, Any], access_token: str, base_path: str = "/app/documents") -> Dict[str, str]:
     """
-    Download documents from ShuftiPro URLs and save them to user-specific directory.
+    Download proof documents and videos from ShuftiPro using access token.
+    Handles document proofs, verification videos, and reports.
     
     Args:
-        user_id: User identifier for directory name
-        document_urls: Dict of {document_type: url}
-        base_path: Base directory for storing documents
+        user_id: User identifier for S3 key prefix
+        proofs: Dict containing proof URLs (document.proof, verification_video, verification_report)
+        access_token: Access token for authenticating with ShuftiPro proof URLs
+        base_path: Base directory for local backup (optional)
         
     Returns:
-        Dict of {document_type: local_file_path}
+        Dict of {proof_type: s3_key}
     """
-    # Create user directory
+    # Get S3 storage client
+    try:
+        s3 = get_s3_storage()
+        use_s3 = True
+    except Exception as e:
+        logger.warning(f"S3 storage not available, falling back to local: {e}")
+        use_s3 = False
+    
+    # Create user directory for local backup
+    user_dir = Path(base_path) / user_id
+    user_dir.mkdir(parents=True, exist_ok=True)
+    
+    downloaded_files = {}
+    
+    # Extract URLs from nested structure
+    urls_to_download = {}
+    
+    # Document proof (can be nested under document key)
+    if "document" in proofs and isinstance(proofs["document"], dict):
+        doc_proof = proofs["document"].get("proof")
+        if doc_proof:
+            urls_to_download["document_proof"] = doc_proof
+    
+    # Video and report at top level
+    if "verification_video" in proofs and proofs["verification_video"]:
+        urls_to_download["verification_video"] = proofs["verification_video"]
+    
+    if "verification_report" in proofs and proofs["verification_report"]:
+        urls_to_download["verification_report"] = proofs["verification_report"]
+    
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        for proof_type, url in urls_to_download.items():
+            if not url:
+                continue
+                
+            try:
+                logger.info(f"Downloading {proof_type} for user {user_id}")
+                
+                # Use Bearer token authentication (confirmed working)
+                headers = {"Authorization": f"Bearer {access_token}"}
+                response = await client.get(url, headers=headers, follow_redirects=True)
+                
+                response.raise_for_status()
+                
+                # Determine file extension
+                content_type = response.headers.get("content-type", "")
+                if "video" in content_type or "mp4" in content_type or proof_type == "verification_video":
+                    ext = ".mp4"
+                elif "pdf" in content_type or proof_type == "verification_report":
+                    ext = ".pdf"
+                elif "jpeg" in content_type or "jpg" in content_type:
+                    ext = ".jpg"
+                elif "png" in content_type:
+                    ext = ".png"
+                else:
+                    ext = ".bin"  # Unknown type
+                
+                filename = f"{proof_type}{ext}"
+                file_content = response.content
+                
+                # Save locally as backup
+                local_path = user_dir / filename
+                with open(local_path, "wb") as f:
+                    f.write(file_content)
+                logger.info(f"Saved local backup: {local_path}")
+                
+                # Upload to S3/MinIO if available
+                if use_s3:
+                    s3_key = f"documents/{user_id}/{filename}"
+                    s3.upload_file(
+                        file_content=file_content,
+                        key=s3_key,
+                        content_type=content_type or "application/octet-stream"
+                    )
+                    logger.info(f"Uploaded {proof_type} to S3: {s3_key}")
+                    downloaded_files[proof_type] = s3_key
+                else:
+                    downloaded_files[proof_type] = str(local_path)
+                
+            except Exception as e:
+                logger.error(f"Failed to download {proof_type} from {url}: {e}")
+                continue
+    
+    return downloaded_files
+
+
+async def download_documents(user_id: str, document_urls: Dict[str, str], base_path: str = "/app/documents") -> Dict[str, str]:
+    """
+    Download documents from ShuftiPro URLs and upload to S3/MinIO.
+    Also saves a local backup copy.
+    
+    Args:
+        user_id: User identifier for S3 key prefix
+        document_urls: Dict of {document_type: url}
+        base_path: Base directory for local backup (optional)
+        
+    Returns:
+        Dict of {document_type: s3_key}
+    """
+    # Get S3 storage client
+    try:
+        s3 = get_s3_storage()
+        use_s3 = True
+    except Exception as e:
+        logger.warning(f"S3 storage not available, falling back to local: {e}")
+        use_s3 = False
+    
+    # Create user directory for local backup
     user_dir = Path(base_path) / user_id
     user_dir.mkdir(parents=True, exist_ok=True)
     
@@ -189,15 +299,37 @@ async def download_documents(user_id: str, document_urls: Dict[str, str], base_p
                 else:
                     ext = ".jpg"  # default
                 
-                # Save file
                 filename = f"{doc_type}{ext}"
-                file_path = user_dir / filename
                 
-                with open(file_path, "wb") as f:
-                    f.write(response.content)
+                # Upload to S3/MinIO
+                if use_s3:
+                    try:
+                        # S3 key: documents/{user_id}/{filename}
+                        s3_key = f"documents/{user_id}/{filename}"
+                        s3.upload_file(
+                            file_content=response.content,
+                            key=s3_key,
+                            content_type=content_type
+                        )
+                        downloaded_files[doc_type] = s3_key
+                        logger.info(f"Uploaded {doc_type} for user {user_id} to S3: {s3_key}")
+                    except Exception as s3_error:
+                        logger.error(f"Failed to upload {doc_type} to S3: {s3_error}")
+                        use_s3 = False  # Fall back to local for remaining files
                 
-                downloaded_files[doc_type] = str(file_path)
-                logger.info(f"Downloaded {doc_type} for user {user_id} to {file_path}")
+                # Save local backup copy
+                if not use_s3:
+                    file_path = user_dir / filename
+                    with open(file_path, "wb") as f:
+                        f.write(response.content)
+                    downloaded_files[doc_type] = str(file_path)
+                    logger.info(f"Saved {doc_type} for user {user_id} locally: {file_path}")
+                else:
+                    # Also save local backup even when using S3
+                    file_path = user_dir / filename
+                    with open(file_path, "wb") as f:
+                        f.write(response.content)
+                    logger.debug(f"Local backup saved: {file_path}")
                 
             except Exception as e:
                 logger.error(f"Failed to download {doc_type} for user {user_id}: {e}")
@@ -273,6 +405,21 @@ def update_kyc_session_status(
 
 
 def get_kyc_session(reference: str) -> Optional[Dict[str, Any]]:
+    """Retrieve a KYC session by reference."""
     table = get_table()
-    resp = table.get_item(Key={"reference": reference})
-    return resp.get("Item")
+    
+    response = table.get_item(Key={"reference": reference})
+    return response.get("Item")
+
+
+def list_kyc_sessions(limit: int = 50) -> list:
+    """List all KYC sessions (most recent first)."""
+    table = get_table()
+    
+    response = table.scan(Limit=limit)
+    items = response.get("Items", [])
+    
+    # Sort by created_at descending (most recent first)
+    items.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    
+    return items

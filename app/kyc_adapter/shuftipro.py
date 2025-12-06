@@ -37,12 +37,23 @@ class ShuftiProAdapter(KYCProvider):
     def _build_payload(self, body: Dict[str, Any]) -> Dict[str, Any]:
         reference = f"ref-{body['user_id']}-{randint(1000, 9999)}"
 
+        # Always include journey_id (can be overridden from request)
+        # Use provided journey_id or default if None/missing
+        journey_id = body.get("journey_id") or "iySLIfgD1764787557"
+        
         payload: Dict[str, Any] = {
             "reference": reference,
-            "journey_id": body.get("journey_id", "iySLIfgD1764787557"),
+            "journey_id": journey_id,
             "email": body["email"],
-            "enhanced_originality_checks": "0",
+            "enhanced_originality_checks": "0"
         }
+        
+        logger.info(f"Using journey_id: {journey_id}")
+        
+        # Add verification services if provided
+        if "verification_services" in body:
+            payload.update(body["verification_services"])
+            logger.info("Using custom verification services from request body")
 
         if self.callback_url:
             payload["callback_url"] = self.callback_url
@@ -61,7 +72,7 @@ class ShuftiProAdapter(KYCProvider):
         payload = self._build_payload(body)
 
         logger.info(f"Calling ShuftiPro API at {self.api_url}")
-        logger.debug(f"Payload: {json.dumps(payload, indent=2)}")
+        logger.info(f"ACTUAL PAYLOAD SENT: {json.dumps(payload, indent=2)}")
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
