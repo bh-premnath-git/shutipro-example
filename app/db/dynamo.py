@@ -6,12 +6,16 @@ from typing import Optional, Dict, Any
 from datetime import datetime
 import logging
 from storage.s3 import get_s3_storage
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 logger = logging.getLogger(__name__)
 
 
 DYNAMODB_ENDPOINT = os.getenv("DYNAMODB_ENDPOINT", "http://dynamodb-local:8000")
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
+DOCUMENT_BACKUP_PATH = os.getenv("DOCUMENT_BACKUP_PATH", "/app/documents")
+ALLOW_LOCAL_FALLBACK = os.getenv("ALLOW_LOCAL_FALLBACK", "true").lower() == "true"
+MIN_FILE_SIZE_BYTES = int(os.getenv("MIN_FILE_SIZE_BYTES", "100"))  # Minimum valid file size
 
 
 def get_table():
@@ -151,17 +155,17 @@ def extract_ocr_fields(raw_response: Dict[str, Any]) -> Dict[str, Any]:
     return {k: v for k, v in fields.items() if v is not None}
 
 
-async def download_proof_documents(user_id: str, proofs: Dict[str, Any], access_token: str, base_path: str = "/app/documents") -> Dict[str, str]:
+async def download_proof_documents(user_id: str, proofs: Dict[str, Any], access_token: str, base_path: Optional[str] = None) -> Dict[str, str]:
     """
     Download proof documents and videos from ShuftiPro using access token.
-    Handles document proofs, verification videos, and reports.
-    
+    Handles document proofs, verification videos, and reports with retry logic and validation.
+
     Args:
         user_id: User identifier for S3 key prefix
         proofs: Dict containing proof URLs (document.proof, verification_video, verification_report)
         access_token: Access token for authenticating with ShuftiPro proof URLs
-        base_path: Base directory for local backup (optional)
-        
+        base_path: Base directory for local backup (uses DOCUMENT_BACKUP_PATH env var if not provided)
+
     Returns:
         Dict of {proof_type: s3_key}
     """
@@ -170,45 +174,63 @@ async def download_proof_documents(user_id: str, proofs: Dict[str, Any], access_
         s3 = get_s3_storage()
         use_s3 = True
     except Exception as e:
-        logger.warning(f"S3 storage not available, falling back to local: {e}")
+        error_msg = f"S3 storage initialization failed: {e}"
+        if not ALLOW_LOCAL_FALLBACK:
+            logger.error(f"{error_msg} - Local fallback not allowed in production mode")
+            raise RuntimeError(f"S3 storage required but unavailable: {e}")
+        logger.warning(f"{error_msg} - Falling back to local storage")
         use_s3 = False
-    
+
+    # Use configured path or provided path
+    if base_path is None:
+        base_path = DOCUMENT_BACKUP_PATH
+
     # Create user directory for local backup
     user_dir = Path(base_path) / user_id
     user_dir.mkdir(parents=True, exist_ok=True)
-    
+
     downloaded_files = {}
-    
+
     # Extract URLs from nested structure
     urls_to_download = {}
-    
+
     # Document proof (can be nested under document key)
     if "document" in proofs and isinstance(proofs["document"], dict):
         doc_proof = proofs["document"].get("proof")
         if doc_proof:
             urls_to_download["document_proof"] = doc_proof
-    
+
     # Video and report at top level
     if "verification_video" in proofs and proofs["verification_video"]:
         urls_to_download["verification_video"] = proofs["verification_video"]
-    
+
     if "verification_report" in proofs and proofs["verification_report"]:
         urls_to_download["verification_report"] = proofs["verification_report"]
-    
+
+    # Helper function with retry logic
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError))
+    )
+    async def download_with_retry(client: httpx.AsyncClient, url: str, headers: dict) -> httpx.Response:
+        """Download file with retry logic for transient failures."""
+        response = await client.get(url, headers=headers, follow_redirects=True)
+        response.raise_for_status()
+        return response
+
     async with httpx.AsyncClient(timeout=60.0) as client:
         for proof_type, url in urls_to_download.items():
             if not url:
                 continue
-                
+
             try:
                 logger.info(f"Downloading {proof_type} for user {user_id}")
-                
+
                 # Use Bearer token authentication (confirmed working)
                 headers = {"Authorization": f"Bearer {access_token}"}
-                response = await client.get(url, headers=headers, follow_redirects=True)
-                
-                response.raise_for_status()
-                
+                response = await download_with_retry(client, url, headers)
+
                 # Determine file extension
                 content_type = response.headers.get("content-type", "")
                 if "video" in content_type or "mp4" in content_type or proof_type == "verification_video":
@@ -221,33 +243,55 @@ async def download_proof_documents(user_id: str, proofs: Dict[str, Any], access_
                     ext = ".png"
                 else:
                     ext = ".bin"  # Unknown type
-                
+
                 filename = f"{proof_type}{ext}"
                 file_content = response.content
-                
+
+                # Validate file size
+                file_size = len(file_content)
+                if file_size < MIN_FILE_SIZE_BYTES:
+                    logger.error(f"File {proof_type} is too small ({file_size} bytes), likely corrupted or empty")
+                    continue
+
+                # Validate content type matches expected type
+                if proof_type == "verification_video" and "video" not in content_type:
+                    logger.warning(f"Content type mismatch for {proof_type}: expected video, got {content_type}")
+                elif proof_type == "verification_report" and "pdf" not in content_type:
+                    logger.warning(f"Content type mismatch for {proof_type}: expected PDF, got {content_type}")
+
+                logger.info(f"Downloaded {proof_type}: {file_size} bytes, type: {content_type}")
+
                 # Save locally as backup
                 local_path = user_dir / filename
                 with open(local_path, "wb") as f:
                     f.write(file_content)
                 logger.info(f"Saved local backup: {local_path}")
-                
+
                 # Upload to S3/MinIO if available
                 if use_s3:
-                    s3_key = f"documents/{user_id}/{filename}"
-                    s3.upload_file(
-                        file_content=file_content,
-                        key=s3_key,
-                        content_type=content_type or "application/octet-stream"
-                    )
-                    logger.info(f"Uploaded {proof_type} to S3: {s3_key}")
-                    downloaded_files[proof_type] = s3_key
+                    try:
+                        s3_key = f"documents/{user_id}/{filename}"
+                        s3.upload_file(
+                            file_content=file_content,
+                            key=s3_key,
+                            content_type=content_type or "application/octet-stream"
+                        )
+                        logger.info(f"Uploaded {proof_type} to S3: {s3_key}")
+                        downloaded_files[proof_type] = s3_key
+                    except Exception as s3_error:
+                        logger.error(f"S3 upload failed for {proof_type}: {s3_error}")
+                        if not ALLOW_LOCAL_FALLBACK:
+                            raise  # Re-raise if fallback not allowed
+                        # Use local path if S3 fails and fallback is allowed
+                        downloaded_files[proof_type] = str(local_path)
+                        logger.warning(f"Using local path for {proof_type} due to S3 failure")
                 else:
                     downloaded_files[proof_type] = str(local_path)
-                
+
             except Exception as e:
-                logger.error(f"Failed to download {proof_type} from {url}: {e}")
+                logger.error(f"Failed to download {proof_type} from {url} after retries: {e}")
                 continue
-    
+
     return downloaded_files
 
 
@@ -348,24 +392,29 @@ def save_kyc_session(
 ):
     """Save or update KYC session in DynamoDB."""
     table = get_table()
-    
+
     # Extract OCR fields if not provided
     if fields is None:
         fields = extract_ocr_fields(raw_response)
-    
+
+    # Check if this is a new session or update
+    existing = table.get_item(Key={"reference": reference}).get("Item")
+
+    now = datetime.utcnow().isoformat()
     item = {
         "reference": reference,
         "user_id": user_id,
         "provider": provider,
         "status": status,
         "raw": raw_response,
-        "updated_at": datetime.utcnow().isoformat(),
+        "created_at": existing.get("created_at") if existing else now,  # Preserve original created_at
+        "updated_at": now,
     }
-    
+
     # Only add fields if there are any
     if fields:
         item["fields"] = fields
-    
+
     table.put_item(Item=item)
 
 
