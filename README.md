@@ -388,7 +388,7 @@ For local development with webhooks:
    docker compose restart app
    ```
 
-See [LOCALHOST_RUN_SETUP.md](LOCALHOST_RUN_SETUP.md) for detailed webhook setup with Cloudflare Tunnel.
+See [SETUP_GUIDE.md](SETUP_GUIDE.md) for detailed webhook setup with Cloudflare Tunnel.
 
 ## Development
 
@@ -416,13 +416,12 @@ See [LOCALHOST_RUN_SETUP.md](LOCALHOST_RUN_SETUP.md) for detailed webhook setup 
 ├── .gitignore                    # Git ignore rules
 ├── setup_vault.sh                # Vault setup script
 ├── test_api.sh                   # API testing script
-├── start_tunnel.sh               # Cloudflare Tunnel helper
 ├── get_tunnel_url.sh             # Extract tunnel URL from logs
 ├── set_callback_url.sh           # Configure callback URL
 ├── README.md                     # This file
-├── START_HERE.md                 # Quick start guide
-├── SHUFTIPRO_INTEGRATION.md      # Integration details
-└── LOCALHOST_RUN_SETUP.md        # Webhook setup guide
+├── SETUP_GUIDE.md                # Complete setup & configuration
+├── API_DOCUMENTATION.md          # Complete API reference
+└── OPERATIONAL_GUIDE.md          # Testing & production deployment
 ```
 
 ### Common Commands
@@ -707,9 +706,9 @@ docker exec -it dynamodb-local aws dynamodb list-tables \
 
 ## Additional Documentation
 
-- **[START_HERE.md](START_HERE.md)** - Quick start guide and overview
-- **[SHUFTIPRO_INTEGRATION.md](SHUFTIPRO_INTEGRATION.md)** - Detailed ShuftiPro integration guide
-- **[LOCALHOST_RUN_SETUP.md](LOCALHOST_RUN_SETUP.md)** - Local webhook setup with Cloudflare Tunnel (cloudflared)
+- **[SETUP_GUIDE.md](SETUP_GUIDE.md)** - Complete setup and configuration guide (Quick start, webhooks, MinIO/S3, ShuftiPro integration)
+- **[API_DOCUMENTATION.md](API_DOCUMENTATION.md)** - Complete API reference (All endpoints, webhook events, response structures, feature coverage)
+- **[OPERATIONAL_GUIDE.md](OPERATIONAL_GUIDE.md)** - Testing, OCR configuration, proof downloads, and production deployment
 - **[API Docs (Swagger)](http://localhost:8181/docs)** - Interactive API documentation (when running)
 
 ## Contributing
