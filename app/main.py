@@ -457,22 +457,23 @@ async def shuftipro_webhook(request: Request):
     logger.info(f"Received webhook for reference: {reference}")
     logger.debug(f"Webhook payload: {json.dumps(payload, indent=2)}")
     
-    # Verify signature (required for production)
+    # Verify signature (MANDATORY for security)
     signature = request.headers.get("Signature")
-    if signature:
-        # Get secret key from adapter (already loaded from Vault)
-        secret_key = adapter.secret_key
-        # Double hash for clients registered after 15 March 2023
-        secret_hash = hashlib.sha256(secret_key.encode()).hexdigest()
-        calculated_sig = hashlib.sha256(f"{body_text}{secret_hash}".encode()).hexdigest()
-        
-        if signature != calculated_sig:
-            logger.error(f"Signature verification FAILED for {reference}")
-            raise HTTPException(status_code=401, detail="Invalid signature")
-        else:
-            logger.info(f"Signature verified for {reference}")
-    else:
-        logger.warning(f"No signature header for {reference} - accepting anyway")
+    if not signature:
+        logger.error(f"Missing signature header for {reference}")
+        raise HTTPException(status_code=401, detail="Missing signature header - webhook must be signed")
+
+    # Get secret key from adapter (already loaded from Vault)
+    secret_key = adapter.secret_key
+    # Double hash for clients registered after 15 March 2023
+    secret_hash = hashlib.sha256(secret_key.encode()).hexdigest()
+    calculated_sig = hashlib.sha256(f"{body_text}{secret_hash}".encode()).hexdigest()
+
+    if signature != calculated_sig:
+        logger.error(f"Signature verification FAILED for {reference}")
+        raise HTTPException(status_code=401, detail="Invalid signature")
+
+    logger.info(f"Signature verified for {reference}")
     
     # Extract event and status
     event = payload.get("event", "")
@@ -638,25 +639,7 @@ async def shuftipro_webhook(request: Request):
         except Exception as e:
             logger.error(f"Error fetching proof URLs for {reference}: {e}")
             # Don't fail the webhook if proof fetching fails
-    
-    # Download documents if available (legacy)
-    try:
-        # Get updated session with extracted fields
-        existing = get_kyc_session(reference)
-        if existing:
-            user_id = existing.get("user_id")
-            fields = existing.get("fields", {})
-            document_urls = fields.get("document_urls", {})
-            
-            # Download documents if any URLs found
-            if document_urls:
-                logger.info(f"Downloading {len(document_urls)} documents for user {user_id}")
-                downloaded = await download_documents(user_id, document_urls)
-                logger.info(f"Downloaded {len(downloaded)} documents: {list(downloaded.keys())}")
-    except Exception as e:
-        logger.error(f"Failed to download documents for {reference}: {e}")
-        # Don't fail the webhook if download fails
-    
+
     # Return success
     return {
         "status": "received",
