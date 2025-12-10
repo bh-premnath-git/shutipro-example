@@ -162,7 +162,7 @@ async def download_proof_documents(user_id: str, proofs: Dict[str, Any], access_
 
     Args:
         user_id: User identifier for S3 key prefix
-        proofs: Dict containing proof URLs (document.proof, verification_video, verification_report)
+        proofs: Dict containing proof URLs (document.proof, address.proof, verification_video, verification_report, etc.)
         access_token: Access token for authenticating with ShuftiPro proof URLs
         base_path: Base directory for local backup (uses DOCUMENT_BACKUP_PATH env var if not provided)
 
@@ -191,21 +191,24 @@ async def download_proof_documents(user_id: str, proofs: Dict[str, Any], access_
 
     downloaded_files = {}
 
-    # Extract URLs from nested structure
+    # Extract URLs from nested structure - dynamically handle all proof types
     urls_to_download = {}
 
-    # Document proof (can be nested under document key)
-    if "document" in proofs and isinstance(proofs["document"], dict):
-        doc_proof = proofs["document"].get("proof")
-        if doc_proof:
-            urls_to_download["document_proof"] = doc_proof
+    # Handle nested proof objects (document, address, etc.)
+    for key, value in proofs.items():
+        if key == "access_token":
+            continue  # Skip access_token field
+            
+        if isinstance(value, dict) and "proof" in value:
+            # Nested proof object like {"document": {"proof": "url"}}
+            proof_url = value.get("proof")
+            if proof_url:
+                urls_to_download[f"{key}_proof"] = proof_url
+        elif isinstance(value, str) and value.startswith("http"):
+            # Direct URL like {"verification_video": "url"}
+            urls_to_download[key] = value
 
-    # Video and report at top level
-    if "verification_video" in proofs and proofs["verification_video"]:
-        urls_to_download["verification_video"] = proofs["verification_video"]
-
-    if "verification_report" in proofs and proofs["verification_report"]:
-        urls_to_download["verification_report"] = proofs["verification_report"]
+    logger.info(f"Found {len(urls_to_download)} proof URLs to download: {list(urls_to_download.keys())}")
 
     # Helper function with retry logic
     @retry(
@@ -213,9 +216,9 @@ async def download_proof_documents(user_id: str, proofs: Dict[str, Any], access_
         wait=wait_exponential(multiplier=1, min=2, max=10),
         retry=retry_if_exception_type((httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError))
     )
-    async def download_with_retry(client: httpx.AsyncClient, url: str, headers: dict) -> httpx.Response:
-        """Download file with retry logic for transient failures."""
-        response = await client.get(url, headers=headers, follow_redirects=True)
+    async def download_with_retry(client: httpx.AsyncClient, url: str, payload: dict) -> httpx.Response:
+        """Download file with retry logic for transient failures using POST method."""
+        response = await client.post(url, json=payload, follow_redirects=True)
         response.raise_for_status()
         return response
 
@@ -225,11 +228,11 @@ async def download_proof_documents(user_id: str, proofs: Dict[str, Any], access_
                 continue
 
             try:
-                logger.info(f"Downloading {proof_type} for user {user_id}")
+                logger.info(f"Downloading {proof_type} for user {user_id} from {url}")
 
-                # Use Bearer token authentication (confirmed working)
-                headers = {"Authorization": f"Bearer {access_token}"}
-                response = await download_with_retry(client, url, headers)
+                # Use POST method with access_token in body (per Shuftipro documentation)
+                payload = {"access_token": access_token}
+                response = await download_with_retry(client, url, payload)
 
                 # Determine file extension
                 content_type = response.headers.get("content-type", "")
